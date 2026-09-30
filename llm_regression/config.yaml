@@ -1,0 +1,40 @@
+# 配置层：一套配置管住地址、鉴权、超时、重试与耗时基线
+#
+# 凭证规则：api_key / base_url 用 ${VAR} 占位符，从环境变量注入，绝不写进仓库。
+# real 环境故意不给默认值——变量没设置就直接报配置错误，
+# 而不是拿空地址发请求跑出一堆看不懂的报错。
+
+environments:
+  # 本地回归：自建 Mock 服务作为被测对象，结果确定可复现
+  mock:
+    target: mock
+    api:
+      base_url: "http://127.0.0.1:8000"
+      path: "/llm/chat"
+      api_key: "mock-key-for-local-regression"
+      model: "mock-llm"
+      timeout: 3.0
+    retry:
+      max_attempts: 3
+      # Mock 是本地服务，退避取小值，避免被重试拖长回归总时长
+      backoff: 0.05
+    # 本地服务是毫秒级，基线收紧到 0.5s，对“慢了一倍”也敏感
+    latency_baseline: 0.5
+    mock_server:
+      host: "127.0.0.1"
+      port: 8000
+
+  # 真实接口回归：凭证走环境变量
+  real:
+    target: real
+    api:
+      base_url: "${LLM_BASE_URL}"
+      path: "/llm/chat"
+      api_key: "${LLM_API_KEY}"
+      model: "${LLM_MODEL:-mock-llm}"
+      timeout: 30.0
+    retry:
+      max_attempts: 2
+      backoff: 0.5
+    # 真实大模型生成耗时抖动大，基线按实测 P95 标定后再收紧
+    latency_baseline: 20.0
