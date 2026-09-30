@@ -77,15 +77,16 @@ jobs:
 
   real-regression:
     name: 真实接口回归（需 Secrets）
-    needs: mock-regression
     # 注意：job 级 if 里不能用 secrets 上下文（GitHub Actions 硬限制），
     # 只能用 github / inputs / needs / vars。
-    # 因此用一个**非敏感**的 Variables 开关 ENABLE_REAL_REGRESSION 控制是否执行，
+    # 因此用**非敏感**的 Variables 开关 ENABLE_REAL_REGRESSION 控制是否执行，
     # 真正的密钥仍放在 Secrets（加密、日志自动打码）。
-    # 未设置该开关时整个作业自动跳过，不会让门禁变红。
+    #
+    # 两个条件都用「或」兜底：${{ inputs.env }} 与 ${{ github.event.inputs.env }}
+    # 在不同 GitHub 版本/触发方式下的可用性不一致，只写一个会出现「配置都对却被跳过」。
     if: >-
       github.event_name == 'workflow_dispatch' &&
-      inputs.env == 'real' &&
+      (inputs.env == 'real' || github.event.inputs.env == 'real') &&
       vars.ENABLE_REAL_REGRESSION == 'true'
     runs-on: ubuntu-latest
     defaults:
@@ -99,6 +100,13 @@ jobs:
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       PYTHONIOENCODING: utf-8
     steps:
+      - name: 打印触发上下文（便于排查作业被跳过的原因）
+        run: |
+          echo "event_name     = ${{ github.event_name }}"
+          echo "inputs.env     = '${{ inputs.env }}'"
+          echo "event.inputs   = '${{ github.event.inputs.env }}'"
+          echo "vars 开关      = '${{ vars.ENABLE_REAL_REGRESSION }}'"
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
