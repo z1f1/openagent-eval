@@ -153,6 +153,9 @@ addopts = "-v --tb=short --strict-markers"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks tests as integration tests",
+    "feature: 标记功能模块",
+    "priority: 标记用例优先级",
+    "desc: 用例描述",
 ]
 
 [tool.coverage.run]
