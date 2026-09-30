@@ -21,8 +21,17 @@ LOGGER = logging.getLogger("llm-regression")
 pytestmark = pytest.mark.regression
 
 
-def _run(case: CaseData, client: LLMChatClient, trace: Trace, baseline: float) -> None:
-    """统一的「调用 + 断言 + 日志」流程，四个场景共用。"""
+def _run(
+    case: CaseData,
+    client: LLMChatClient,
+    trace: Trace,
+    baseline: float,
+    request: pytest.FixtureRequest,
+) -> None:
+    """统一的「调用 + 断言 + 日志」流程，四个场景共用。
+
+    响应对像挂到用例节点上，供 conftest 的运行信息收集钩子读取（写入禅道记录）。
+    """
     LOGGER.info("执行用例 %s：%s", case.id, case.title)
     prompt = case.prompt if case.send_prompt else None
     response = client.chat(
@@ -42,36 +51,53 @@ def _run(case: CaseData, client: LLMChatClient, trace: Trace, baseline: float) -
         response.error_kind,
         response.elapsed,
     )
+    request.node._llm_response = response  # type: ignore[attr-defined]
     assert_all(case, response, baseline)
 
 
 @pytest.mark.normal
 def test_normal_chat(
-    case: CaseData, client: LLMChatClient, trace: Trace, latency_baseline: float
+    case: CaseData,
+    client: LLMChatClient,
+    trace: Trace,
+    latency_baseline: float,
+    request: pytest.FixtureRequest,
 ) -> None:
     """TC01/TC05 正常场景：返回 200、结构完整、内容非空且不过短。"""
-    _run(case, client, trace, latency_baseline)
+    _run(case, client, trace, latency_baseline, request)
 
 
 @pytest.mark.empty
 def test_empty_prompt(
-    case: CaseData, client: LLMChatClient, trace: Trace, latency_baseline: float
+    case: CaseData,
+    client: LLMChatClient,
+    trace: Trace,
+    latency_baseline: float,
+    request: pytest.FixtureRequest,
 ) -> None:
     """TC02/TC06~TC09 空输入：必须明确返回 4xx + 业务错误码，不允许静默成功。"""
-    _run(case, client, trace, latency_baseline)
+    _run(case, client, trace, latency_baseline, request)
 
 
 @pytest.mark.oversized
 def test_oversized_prompt(
-    case: CaseData, client: LLMChatClient, trace: Trace, latency_baseline: float
+    case: CaseData,
+    client: LLMChatClient,
+    trace: Trace,
+    latency_baseline: float,
+    request: pytest.FixtureRequest,
 ) -> None:
     """TC03/TC10~TC12 超长文本：边界三点夹逼上限 1000，越界要快速拒绝。"""
-    _run(case, client, trace, latency_baseline)
+    _run(case, client, trace, latency_baseline, request)
 
 
 @pytest.mark.illegal
 def test_illegal_prompt(
-    case: CaseData, client: LLMChatClient, trace: Trace, latency_baseline: float
+    case: CaseData,
+    client: LLMChatClient,
+    trace: Trace,
+    latency_baseline: float,
+    request: pytest.FixtureRequest,
 ) -> None:
     """TC04/TC13~TC19 非法字符与异常分支：非法字符拒绝、XSS 不回显、重试与超时可判定。"""
-    _run(case, client, trace, latency_baseline)
+    _run(case, client, trace, latency_baseline, request)

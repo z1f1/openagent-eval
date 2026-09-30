@@ -24,3 +24,13 @@
     content_not_empty: true
     content_min_chars: 5
   latency_max: auto
+- id: TC20
+  title: 新增用例验证——加数据即可接入回归
+  design: 有效等价类 —— 验证分层设计下新增用例无需改代码
+  scenario: normal
+  prompt: "这是一条新加的验证用例"
+  expect:
+    status: 200
+    schema: chat_success
+    content_not_empty: true
+  latency_max: auto

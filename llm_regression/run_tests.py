@@ -41,6 +41,11 @@ def build_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="只跑某一类场景",
     )
     parser.add_argument("--keyword", default=None, help="按用例编号过滤，等价 -k")
+    parser.add_argument(
+        "--upload-zentao",
+        action="store_true",
+        help="跑完后把运行信息（结果明细 + HTML/JUnit 报告附件）上传到禅道；需先设置 ZENTAO_* 环境变量",
+    )
     return parser.parse_args(argv)
 
 
@@ -66,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
         pytest_args.append(f"--scenario={args.scenario}")
     if args.keyword:
         pytest_args.extend(["-k", args.keyword])
+    if args.upload_zentao:
+        pytest_args.append("--upload-zentao")
 
     print(f"[回归启动] env={args.env} scenario={args.scenario or 'all'}")
     started = dt.datetime.now()

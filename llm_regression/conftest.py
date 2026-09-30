@@ -12,8 +12,11 @@ pytest_runtest_makereport → 失败留痕（写进 HTML 报告）+ 自动提禅
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
+import os
+import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Iterator
@@ -29,6 +32,7 @@ from cases import CaseData, load_cases
 from client import LLMChatClient, Trace
 from config import ConfigError, EnvConfig, load_config
 from mock_server import MockLLMChatServer, MockServerError
+from zentao_run_report import CaseResult, RunResult, submit_run
 
 LOGGER = logging.getLogger("llm-regression")
 REPORT_DIR = Path(__file__).resolve().parent / "reports"
@@ -55,6 +59,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=None,
         choices=SCENARIOS,
         help="只跑某一类场景：normal/empty/oversized/illegal",
+    )
+    group.addoption(
+        "--upload-zentao",
+        action="store_true",
+        default=False,
+        help="跑完后把运行信息（结果明细 + HTML/JUnit 报告附件）上传到禅道；需先设置 ZENTAO_* 环境变量",
     )
 
 
@@ -190,6 +200,9 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]):
     case: CaseData | None = callspec.params.get("case") if callspec is not None else None
     setattr(report, "_llm_case", case)
 
+    # 收集执行结果，供会话结束时生成运行信息（本地摘要 + 禅道上传）
+    _record_outcome(report, case, getattr(item, "_llm_response", None))
+
     if report.when != "call" or not report.failed:
         return
 
@@ -222,9 +235,128 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[Any]):
         LOGGER.error("禅道提单失败（不影响回归结果）：%s", exc)
 
 
+# --------------------------------------------------------------------------
+# 运行信息：收集执行结果 -> 本地摘要 -> 可选上传禅道
+# --------------------------------------------------------------------------
+def _outcome_of(report: Any) -> str:
+    if report.skipped:
+        return "skipped"
+    if report.failed:
+        return "error" if report.when in ("setup", "teardown") else "failed"
+    return "passed"
+
+
+def _record_outcome(report: Any, case: CaseData | None, response: Any = None) -> None:
+    """把每条用例的结果累计到会话级运行信息里。setup 阶段的结果不重复记。"""
+    if report.when == "setup" and not report.failed and not report.skipped:
+        return
+
+    results: list[CaseResult] | None = getattr(pytest, "_llm_results", None)
+    if results is None:
+        results = []
+        setattr(pytest, "_llm_results", results)
+
+    node_id = getattr(report, "nodeid", "")
+    case_id = case.id if case else node_id
+    if any(r.case_id == case_id for r in results):
+        return
+
+    detail = ""
+    if _outcome_of(report) in ("failed", "error") and getattr(report, "longreprtext", ""):
+        detail = report.longreprtext.strip().splitlines()[-1][:300]
+
+    results.append(
+        CaseResult(
+            case_id=case_id,
+            title=case.title if case else node_id,
+            scenario=case.scenario_label if case else "-",
+            outcome=_outcome_of(report),
+            duration=round(float(getattr(report, "duration", 0.0) or 0.0), 4),
+            detail=detail,
+            status_code=getattr(response, "status_code", None) if response else None,
+            error_code=getattr(response, "error_code", None) if response else None,
+            elapsed=round(response.elapsed, 4) if response else None,
+            attempts=getattr(response, "attempts", None) if response else None,
+        )
+    )
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    setattr(pytest, "_llm_results", [])
+    setattr(pytest, "_llm_started", dt.datetime.now())
+
+
+def _build_run_result() -> RunResult | None:
+    results: list[CaseResult] = getattr(pytest, "_llm_results", [])
+    env_name = getattr(pytest, "_llm_env_name", "mock")
+    env = load_env_safely(env_name)
+    if env is None:
+        return None
+    started: dt.datetime = getattr(pytest, "_llm_started", dt.datetime.now())
+    duration = (dt.datetime.now() - started).total_seconds()
+
+    scenario = getattr(pytest, "_llm_scenario", None)
+    command = f"python llm_regression/run_tests.py --env {env_name}"
+    if scenario:
+        command += f" --scenario {scenario}"
+    if getattr(pytest, "_llm_upload", False):
+        command += " --upload-zentao"
+
+    return RunResult(
+        environment=env_name,
+        target=env.target,
+        api_url=env.api.url,
+        model=env.api.model,
+        command=command,
+        started_at=started.strftime("%Y-%m-%d %H:%M:%S"),
+        duration=duration,
+        latency_baseline=env.latency_baseline,
+        retry_max=env.retry.max_attempts,
+        cases=results,
+    )
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """会话结束：写本地运行摘要；若指定了 --upload-zentao 则上传禅道。"""
+    run = _build_run_result()
+    if run is None or not run.cases:
+        return
+
+    # 本地摘要始终生成（便于留档与排查），失败不影响回归结果
+    try:
+        summary_json = REPORT_DIR / f"run_summary_{run.environment}.json"
+        summary_md = REPORT_DIR / f"run_summary_{run.environment}.md"
+        from zentao_run_report import render_markdown, to_dict
+
+        summary_json.write_text(json.dumps(to_dict(run), ensure_ascii=False, indent=2), encoding="utf-8")
+        summary_md.write_text(render_markdown(run), encoding="utf-8")
+        LOGGER.info("运行摘要已生成：%s / %s", summary_json.name, summary_md.name)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.error("运行摘要生成失败：%s", exc)
+
+    if not getattr(pytest, "_llm_upload", False):
+        return
+
+    try:
+        attachments = [REPORT_DIR / f"junit_{run.environment}.xml", summary_json, summary_md]
+        # pytest-html 报告文件名带时间戳，取最新一份
+        html_reports = sorted(REPORT_DIR.glob(f"report_{run.environment}_*.html"))
+        if html_reports:
+            attachments.insert(0, html_reports[-1])
+        result = submit_run(run, attachments)
+        print(
+            "\n[禅道] "
+            + (f"运行信息已上传，记录 id={result['record_id']}，附件 {len(result['files'])} 个"
+               if result["uploaded"]
+               else f"未上传：{result['message']}")
+        )
+    except Exception as exc:  # noqa: BLE001 - 上传失败绝不能改变回归判定
+        LOGGER.error("禅道上传失败（不影响回归结果）：%s", exc)
+        print(f"\n[禅道] 上传失败：{exc}")
+
+
 def pytest_html_report_title(report: Any) -> None:
     report.title = "AI 大模型对话接口 · 自动化回归报告"
-
 
 @pytest.hookimpl(optionalhook=True)
 def pytest_html_results_table_header(cells: list[Any]) -> None:
@@ -267,6 +399,7 @@ def pytest_configure(config: pytest.Config) -> None:
     env_name = str(config.getoption("--env"))
     setattr(pytest, "_llm_env_name", env_name)
     setattr(pytest, "_llm_scenario", config.getoption("--scenario"))
+    setattr(pytest, "_llm_upload", bool(config.getoption("--upload-zentao")))
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
 
     try:
