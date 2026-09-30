@@ -183,13 +183,27 @@ python llm_regression/run_tests.py --env real   # 真实：18 passed（连跑 3 
 
 ### 配置真实回归的 Secrets
 
-仓库 `Settings → Secrets and variables → Actions`：
+在仓库 `Settings → Secrets and variables → Actions` 配置：
 
-| 名称 | 类型 | 说明 |
+| 名称 | 位置 | 说明 |
 | --- | --- | --- |
-| `LLM_BASE_URL` | Secret | 例如 `https://api.deepseek.com` |
-| `LLM_API_KEY` | Secret | 密钥 |
-| `LLM_MODEL` | Variable（可选） | 默认 `deepseek-chat` |
+| `LLM_BASE_URL` | **Secret** | 例如 `https://api.deepseek.com` |
+| `LLM_API_KEY` | **Secret** | 密钥（加密存储、日志自动打码） |
+| `ENABLE_REAL_REGRESSION` | **Variable** | 设为 `true` 才允许执行真实回归作业（非敏感开关） |
+
+**为什么用两个位置**：GitHub Actions 的 **job 级 `if` 条件不允许引用 `secrets` 上下文**
+（只允许 `github` / `inputs` / `needs` / `vars`），所以用一个非敏感的 Variable 作为开关，
+真正的密钥仍放在 Secret 里。
+
+> 踩坑记录：最初把 `secrets.LLM_API_KEY != ''` 写在 job 级 `if` 里，导致整个工作流解析失败 ——
+> CI 直接 failure 且**作业数为 0**。用 `actionlint` 才定位到：
+> `context "secrets" is not allowed here`。
+
+### 本地校验工作流
+
+```bash
+actionlint .github/workflows/llm-regression.yml
+```
 
 ## 失败留痕与禅道联动
 

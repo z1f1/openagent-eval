@@ -78,19 +78,25 @@ jobs:
   real-regression:
     name: 真实接口回归（需 Secrets）
     needs: mock-regression
-    # 未配置 Secrets 时自动跳过，不会让门禁变红
+    # 注意：job 级 if 里不能用 secrets 上下文（GitHub Actions 硬限制），
+    # 只能用 github / inputs / needs / vars。
+    # 因此用一个**非敏感**的 Variables 开关 ENABLE_REAL_REGRESSION 控制是否执行，
+    # 真正的密钥仍放在 Secrets（加密、日志自动打码）。
+    # 未设置该开关时整个作业自动跳过，不会让门禁变红。
     if: >-
       github.event_name == 'workflow_dispatch' &&
       inputs.env == 'real' &&
-      secrets.LLM_API_KEY != ''
+      vars.ENABLE_REAL_REGRESSION == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: llm_regression
     env:
+      # 密钥走 Secrets（加密存储、日志自动打码）
+      # 不设 LLM_MODEL：留空会以空字符串覆盖 config.yaml 的默认值，
+      # 让配置层的 ${LLM_MODEL:-deepseek-chat} 兜底即可；需要覆盖时再加。
       LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-      LLM_MODEL: ${{ vars.LLM_MODEL || 'deepseek-chat' }}
       PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
