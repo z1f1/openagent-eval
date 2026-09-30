@@ -1,0 +1,163 @@
+# 非法字符 / 异常编码 / 异常分支
+#
+# 实测结论（2026-09-30）：
+#   - content 含 NUL / 控制字符 / script 标签：服务端**不校验**，返回 200 正常回答
+#   - 请求体无法解析成 JSON：返回 **400 + 纯文本**（不是结构化 error 对象）
+#   - 模型名不存在：400 + invalid_request_error（不是 404）
+# 分两组：A 组契约口径（仅 Mock 严格模式），B 组实测口径。
+
+# ---------- A 组：契约口径（仅 Mock 严格模式）----------
+
+- id: TC13
+  title: "[契约口径] prompt 含 NUL 字符（\\\\x00），应返回 400 非法字符"
+  design: 无效等价类 —— 不可打印的 NUL
+  scenario: illegal
+  prompt: "正常文本\x00正常文本"
+  mock_model: mock-strict
+  expect:
+    status: 400
+    schema: error
+    error_code: illegal_characters
+  mock_only: true
+
+- id: TC14
+  title: "[契约口径] prompt 含不可打印控制字符（0x01），应返回 400"
+  design: 无效等价类 —— 控制字符（\\t \\n \\r 除外）
+  scenario: illegal
+  prompt: "文本\x01文本"
+  mock_model: mock-strict
+  expect:
+    status: 400
+    schema: error
+    error_code: illegal_characters
+  mock_only: true
+
+- id: TC17
+  title: "[契约口径] 服务端持续 500，客户端应完成重试后仍判定失败"
+  design: 异常分支 —— 需要故障注入才能复现，仅 Mock 支持
+  scenario: illegal
+  prompt: "触发服务端内部错误"
+  mock_model: error-500
+  expect:
+    status: 500
+    schema: error
+    error_code: model_internal_error
+    min_attempts: 3
+  latency_max: 5.0
+  mock_only: true
+
+- id: TC18
+  title: "[契约口径] 瞬时错误自愈——前 2 次 500、第 3 次成功"
+  design: 异常分支 —— 验证重试策略真的生效，仅 Mock 支持故障注入
+  scenario: illegal
+  prompt: "触发瞬时错误并验证重试自愈"
+  mock_model: error-500x2
+  expect:
+    status: 200
+    schema: openai_chat
+    content_not_empty: true
+    min_attempts: 3
+  latency_max: 2.0
+  mock_only: true
+
+- id: TC19
+  title: "[契约口径] 客户端超时分支——服务端慢响应应在超时时间内快速失败"
+  design: 异常分支 —— 需要注入慢响应，仅 Mock 支持
+  scenario: illegal
+  prompt: "__timeout__ 这条请求会被 Mock 故意拖住"
+  request_timeout: 1.0
+  expect:
+    status: null
+    timeout: true
+  mock_only: true
+
+# ---------- B 组：被测开源服务的实测口径 ----------
+
+- id: TC04
+  title: "[实测口径] XSS payload 被当作普通文本处理，返回 200"
+  design: |
+    安全场景，这里刻意**只断言状态码与内容可用性**，不再断言「响应中不得出现 <script」。
+
+    实测发现（值得记录）：该服务会把用户输入**原样写回生成内容**——发送
+    `<script>alert(1)</script>` 时，回答里出现了 "...if that were rendered as HTML on a
+    page, `<script>alert(1)</script>` would trigger..."。本次这是模型在**讨论**这段文本，
+    不是服务端注入；响应体本身是 JSON，是否可执行取决于调用方如何渲染。
+
+    因此「字符串里出现 <script」不足以判定漏洞，用关键词扫描做断言会必然误报。
+    这条降级为「确认服务未因该输入报错、正常返回可用内容」；真正的输出编码责任在
+    客户端渲染层，需要单独的用例与人工评估，不能靠关键词匹配。
+  scenario: illegal
+  prompt: "<script>alert(1)</script>"
+  expect:
+    status: 200
+    schema: openai_chat
+    content_not_empty: true
+  latency_max: auto
+
+- id: TC30
+  title: "[实测口径] content 含 NUL 字符，服务端未校验，返回 200"
+  design: 无效等价类 —— 实测服务端不做字符集校验（这是它的现状，非我方预期）
+  scenario: illegal
+  prompt: "正常文本\x00正常文本"
+  expect:
+    status: 200
+    schema: openai_chat
+    content_not_empty: true
+  latency_max: auto
+
+- id: TC31
+  title: "[实测口径] content 含不可打印控制字符，服务端未校验，返回 200"
+  design: 无效等价类 —— 实测服务端不做控制字符校验
+  scenario: illegal
+  prompt: "文本\x01文本"
+  expect:
+    status: 200
+    schema: openai_chat
+    content_not_empty: true
+  latency_max: auto
+
+- id: TC15
+  title: "[实测口径] 请求体为残缺 JSON，返回 400 纯文本错误"
+  design: |
+    畸形请求体。该服务对无法解析的请求体**不返回结构化 error 对象**，
+    而是直接回纯文本 `Failed to parse the request body as JSON...`。
+    因此 schema 用 status_only（只断状态码），业务错误信号用 any_error_signal 校验。
+  scenario: illegal
+  raw_body: '{"prompt": "hello", "model":'
+  expect:
+    status: 400
+    schema: status_only
+    error_code: any_error_signal
+
+- id: TC16
+  title: "[实测口径] 请求体为非 UTF-8 异常编码字节，返回 400 纯文本错误"
+  design: 无效等价类 —— 编码异常；同样只回纯文本，无结构化错误码
+  scenario: illegal
+  raw_body: !!binary "q5i6u7i8"
+  expect:
+    status: 400
+    schema: status_only
+    error_code: any_error_signal
+
+- id: TC32
+  title: "[实测口径] 请求体为空，返回 400 纯文本错误"
+  design: 边界值 —— 空 body；实测同样不返回结构化错误体
+  scenario: illegal
+  raw_body: ""
+  expect:
+    status: 400
+    schema: status_only
+    error_code: any_error_signal
+
+- id: TC33
+  title: "[实测口径] 模型名不存在，返回 400 invalid_request_error"
+  design: 无效等价类 —— 实测是 400（而非 404），错误信息里会列出受支持的模型名
+  scenario: illegal
+  prompt: "模型名不存在时接口如何响应？"
+  mock_model: mock-unknown
+  expect:
+    status: 400
+    schema: error
+    error_code: invalid_request_error
+  # mock-unknown 只对 Mock 有意义（验证模型白名单校验）；真实环境请用 config.yaml 的真实模型名
+  mock_only: true

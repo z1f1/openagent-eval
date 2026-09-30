@@ -1,0 +1,37 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "调试：当前打开的用例文件（Mock）",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "${file}",
+        "-c",
+        "llm_regression/pytest.ini",
+        "--env",
+        "mock",
+        "-v"
+      ],
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      },
+      "justMyCode": false
+    },
+    {
+      "name": "调试：全量回归（Mock）",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/llm_regression/run_tests.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      },
+      "justMyCode": false
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+# 锁定版本：避免不同机器上 requests/pytest 版本差异导致脚本行为不一致
+#
+# 版本选择说明：
+#   pytest 取 8.4.x —— 既满足本模块（fixture/parametrize/hook 都不依赖 9.x 新特性），
+#   也与仓库主项目里 pytest-asyncio 1.4.0 的 "pytest>=8.4" 要求兼容，
+#   避免同一个虚拟环境里两套依赖互相顶掉（pytest 9 会顶掉 pytest-html）。
+requests==2.32.3
+pytest==8.4.2
+pytest-html==4.1.1
+PyYAML==6.0.2
+# 可选：装了之后凭证可以写在仓库根目录的 .env 里（未装时降级为只读环境变量）
+python-dotenv==1.0.1

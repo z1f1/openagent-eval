@@ -1,0 +1,107 @@
+# 空输入场景
+#
+# 两组数据，口径不同，刻意分开：
+#   A 组（mock_only + mock_model: mock-strict）—— 我们的契约口径：容器类系统应拒绝空/空白输入
+#   B/C 组 —— 被测开源服务的**实测口径**：空值不校验（200），结构错误才拒绝（422）
+# 两边都保留，才能一眼看出「它到底哪里没做输入校验」。
+
+# ---------- A 组：契约口径（仅 Mock 严格模式）----------
+
+- id: TC02
+  title: "[契约口径] prompt 为空字符串，应返回 400 且带业务错误码"
+  design: 边界值 —— 0 字符；预期来自「应有输入校验」的契约口径
+  scenario: empty
+  prompt: ""
+  mock_model: mock-strict
+  expect:
+    status: 400
+    schema: error
+    error_code: empty_prompt
+  mock_only: true
+
+- id: TC07
+  title: "[契约口径] prompt 为纯换行，应返回 400"
+  design: 无效等价类 —— 纯空白（控制字符类）
+  scenario: empty
+  prompt: "\n\n"
+  mock_model: mock-strict
+  expect:
+    status: 400
+    schema: error
+    error_code: blank_prompt
+  mock_only: true
+
+# ---------- B 组：被测开源服务的实测口径（空值不校验）----------
+# 实测结论（2026-09-30，多轮复现）：空串 / 纯空格 / 纯换行都被当作普通输入，
+# 返回 200 且生成正常回答 —— 即该服务在 content 层面没有空值校验。
+
+- id: TC21
+  title: "[实测口径] 空字符串输入，服务端未校验，直接返回 200"
+  design: 边界值 —— 0 字符；按实测契约，服务端不拒绝但必须给出可用回答
+  scenario: empty
+  prompt: ""
+  expect:
+    status: 200
+    schema: openai_chat
+    content_not_empty: true
+  latency_max: auto
+
+- id: TC06
+  title: "[实测口径] 纯空格输入被当作普通输入，返回 200"
+  design: 无效等价类 —— 纯空白；实测服务端未做 trim 校验
+  scenario: empty
+  prompt: "   "
+  expect:
+    status: 200
+    schema: openai_chat
+    content_not_empty: true
+  latency_max: auto
+
+- id: TC25
+  title: "[实测口径] 纯换行输入被当作普通输入，返回 200"
+  design: 无效等价类 —— 纯空白（控制字符类）；实测同样未校验
+  scenario: empty
+  prompt: "\n\n"
+  expect:
+    status: 200
+    schema: openai_chat
+    content_not_empty: true
+  latency_max: auto
+
+# ---------- C 组：服务端确实做了校验的部分 ----------
+# 服务端对 messages 结构有校验，错误码与状态码是 422 / invalid_request_error。
+
+- id: TC22
+  title: "[实测口径] messages 为空数组，返回 400 invalid_request_error"
+  design: |
+    无效等价类 —— messages 结构非法。
+    实测两条路径：序列化层报错时是 422，业务层校验（Empty input messages）时是 400。
+    以实际观察到的 400 为准。
+  scenario: empty
+  raw_body:
+    model: "{model}"
+    messages: []
+  expect:
+    status: 400
+    schema: error
+    error_code: invalid_request_error
+
+- id: TC23
+  title: "[实测口径] prompt 字段缺失，返回 422 invalid_request_error"
+  design: 无效等价类 —— 必填字段缺失；服务端由序列化层报错
+  scenario: empty
+  send_prompt: false
+  expect:
+    status: 422
+    schema: error
+    error_code: invalid_request_error
+
+- id: TC24
+  title: "[实测口径] prompt 传数字类型，返回 422 invalid_request_error"
+  design: 无效等价类 —— 字段类型错误；服务端由序列化层报错
+  scenario: empty
+  prompt: 12345
+  expect:
+    status: 422
+    schema: error
+    error_code: invalid_request_error
