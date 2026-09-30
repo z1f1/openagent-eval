@@ -1,6 +1,5 @@
-# 回归产物不入库：报告按次生成，仓库只保留框架与用例数据
-reports/*.html
-reports/*.xml
+# 回归产物不入库：报告与运行摘要按次生成，仓库只保留框架与用例数据
+reports/
 
 # Python / pytest 缓存
 __pycache__/

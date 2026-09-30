@@ -240,5 +240,10 @@ tiktoken-docs.md
 /config.yaml
 /config.*.yaml
 
+# Secrets: local environment file (never commit real credentials)
+/.env
+/.env.local
+/.env.*.local
+
 # Generated eval report artifacts
 /reports/

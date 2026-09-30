@@ -1,23 +1,24 @@
 """禅道提单：把失败用例转成规范缺陷单，附件自动带上复现信息。
 
-凭证全部走环境变量（**不再明文写在代码里**）：
-    ZENTAO_BASE_URL   例如 http://127.0.0.1:81/zentao/api.php/v2
-    ZENTAO_TOKEN      个人令牌 / API Token
+凭证全部走环境变量或 .env（**不再明文写在代码里**）：
+    ZENTAO_BASE_URL   例如 http://127.0.0.1:81/zentao
+    ZENTAO_TOKEN      个人令牌；或用 ZENTAO_ACCOUNT + ZENTAO_PASSWORD 自动换 token
     ZENTAO_PRODUCT_ID 产品 ID（必填）
     ZENTAO_MODULE_ID  模块 ID（可选，默认 0）
     ZENTAO_ENABLED    置为 1 时才真正提单（默认不启用，避免本地跑失败就污染缺陷库）
 
-只要 ZENTAO_BASE_URL / ZENTAO_TOKEN / ZENTAO_PRODUCT_ID 缺任意一个，本模块静默跳过；
+只要 ZENTAO_BASE_URL / 凭证 / ZENTAO_PRODUCT_ID 缺任意一个，本模块静默跳过；
 提单失败只记日志，绝不改变用例的通过/失败判定。
 """
 
 from __future__ import annotations
 
 import logging
-import os
 from typing import TYPE_CHECKING, Any
 
 import requests
+
+from env_config import get as env_get
 
 if TYPE_CHECKING:  # pragma: no cover
     from cases import CaseData
@@ -29,22 +30,21 @@ TIMEOUT = 10.0
 
 def _settings() -> dict[str, str] | None:
     """读取并校验禅道配置；未启用或配置不全时返回 None。"""
-    if os.environ.get("ZENTAO_ENABLED", "").strip() not in ("1", "true", "True", "yes"):
+    if env_get("ZENTAO_ENABLED").lower() not in ("1", "true", "yes"):
         LOGGER.info("未启用禅道自动提单（设置 ZENTAO_ENABLED=1 启用）")
         return None
 
-    base_url = (os.environ.get("ZENTAO_BASE_URL") or "").strip().rstrip("/")
-    token = (os.environ.get("ZENTAO_TOKEN") or "").strip()
-    product_id = (os.environ.get("ZENTAO_PRODUCT_ID") or "").strip()
+    base_url = env_get("ZENTAO_BASE_URL").rstrip("/")
+    token = env_get("ZENTAO_TOKEN")
+    product_id = env_get("ZENTAO_PRODUCT_ID")
+    has_login = bool(env_get("ZENTAO_ACCOUNT") and env_get("ZENTAO_PASSWORD"))
     missing = [
         name
-        for name, value in (
-            ("ZENTAO_BASE_URL", base_url),
-            ("ZENTAO_TOKEN", token),
-            ("ZENTAO_PRODUCT_ID", product_id),
-        )
+        for name, value in (("ZENTAO_BASE_URL", base_url), ("ZENTAO_PRODUCT_ID", product_id))
         if not value
     ]
+    if not token and not has_login:
+        missing.append("ZENTAO_TOKEN 或 ZENTAO_ACCOUNT+ZENTAO_PASSWORD")
     if missing:
         LOGGER.warning("禅道配置不完整，跳过提单：缺少 %s", ", ".join(missing))
         return None
@@ -53,7 +53,7 @@ def _settings() -> dict[str, str] | None:
         "base_url": base_url,
         "token": token,
         "product_id": product_id,
-        "module_id": (os.environ.get("ZENTAO_MODULE_ID") or "0").strip(),
+        "module_id": env_get("ZENTAO_MODULE_ID", "0") or "0",
     }
 
 
