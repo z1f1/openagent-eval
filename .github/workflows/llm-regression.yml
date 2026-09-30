@@ -100,6 +100,9 @@ jobs:
       - name: 检查开关（未开启则跳过后续步骤）
         id: gate
         shell: bash
+        # 关键：本步骤在 checkout 之前运行，必须覆盖 job 默认的 working-directory
+        # （llm_regression 此时还不存在，否则 bash 无法启动）
+        working-directory: .
         # contains 而非 == ：容忍 Variable 值里的首尾空白/不可见字符
         run: |
           echo "event_name = ${{ github.event_name }}"
