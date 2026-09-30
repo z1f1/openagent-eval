@@ -1,0 +1,5 @@
+# 锁定版本：避免不同机器上 requests/pytest 版本差异导致脚本行为不一致
+requests==2.32.3
+pytest==8.3.5
+pytest-html==4.1.1
+PyYAML==6.0.2
