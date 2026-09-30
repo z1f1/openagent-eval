@@ -247,3 +247,8 @@ tiktoken-docs.md
 
 # Generated eval report artifacts
 /reports/
+
+# Local demo / diagnostic scratch files (local-only, not for upstream)
+/demo-*.yaml
+/demo-*.json
+/diag_*.py
