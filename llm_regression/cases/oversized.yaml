@@ -1,46 +1,101 @@
-# 超长文本场景（边界值分析）
-# 契约上限：prompt 最长 1000 字符。边界三点：999 / 1000 / 1001
+# 超长文本场景
+#
+# 实测结论（2026-09-30，多轮复现）：被测开源服务对 content 长度**没有上限校验**，
+# 1001 / 10000 / 100000 / 200000 字符全部返回 200 并正常生成回答。
+# 因此原有「超长应返回 413 context_length_exceeded」的预期不成立。
+#
+# 保留两组，口径分开：
+#   A 组（mock_only + mock-strict）—— 契约口径：容器类系统应有长度上限并快速拒绝
+#   B 组 —— 实测口径：按真实行为断言，同时验证「大请求体不出错、耗时可控」
+
+# ---------- A 组：契约口径（仅 Mock 严格模式）----------
 
 - id: TC03
-  title: 边界外 1001 字符（上限 +1），应返回 413 且提示上下文超限
-  design: 边界值 —— 离点（上限 +1）
+  title: "[契约口径] 边界外 1001 字符，应返回 413 且提示上下文超限"
+  design: 边界值 —— 离点（上限 +1）；预期来自「应有长度上限」的契约口径
+  scenario: oversized
+  prompt: !!str "{{'A' * 1001}}"
+  mock_model: mock-strict
+  expect:
+    status: 413
+    schema: error
+    error_code: context_length_exceeded
+  latency_max: auto
+  mock_only: true
+
+- id: TC10
+  title: "[契约口径] 边界值 1000 字符（恰好等于上限），应正常返回 200"
+  design: 边界值 —— 上点；契约上限内的正常输入
+  scenario: oversized
+  prompt: !!str "{{'A' * 1000}}"
+  mock_model: mock-strict
+  expect:
+    status: 200
+    schema: openai_chat
+    content_not_empty: true
+  latency_max: auto
+  mock_only: true
+
+- id: TC11
+  title: "[契约口径] 边界内 999 字符，应正常返回 200"
+  design: 边界值 —— 内点
+  scenario: oversized
+  prompt: !!str "{{'A' * 999}}"
+  mock_model: mock-strict
+  expect:
+    status: 200
+    schema: openai_chat
+    content_not_empty: true
+  latency_max: auto
+  mock_only: true
+
+- id: TC12
+  title: "[契约口径] 极端超长 10000 字符，应快速拒绝而不是拖垮服务"
+  design: 无效等价类 —— 远超上限，验证「快速失败」
+  scenario: oversized
+  prompt: !!str "{{'A' * 10000}}"
+  mock_model: mock-strict
+  expect:
+    status: 413
+    schema: error
+    error_code: context_length_exceeded
+  latency_max: auto
+  mock_only: true
+
+# ---------- B 组：被测开源服务的实测口径 ----------
+
+- id: TC26
+  title: "[实测口径] 1001 字符未触发任何长度校验，返回 200"
+  design: 边界值 —— 曾假设的上限 +1；实测服务端无此限制
   scenario: oversized
   prompt: !!str "{{'A' * 1001}}"
   expect:
-    status: 413
-    schema: error
-    error_code: context_length_exceeded
-  latency_max: auto
-
-- id: TC10
-  title: 边界值 1000 字符（恰好等于上限），应正常返回 200
-  design: 边界值 —— 上点（恰好等于上限）
-  scenario: oversized
-  prompt: !!str "{{'A' * 1000}}"
-  expect:
     status: 200
-    schema: chat_success
+    schema: openai_chat
     content_not_empty: true
   latency_max: auto
 
-- id: TC11
-  title: 边界内 999 字符（上限 -1），应正常返回 200
-  design: 边界值 —— 内点（上限 -1）
-  scenario: oversized
-  prompt: !!str "{{'A' * 999}}"
-  expect:
-    status: 200
-    schema: chat_success
-    content_not_empty: true
-  latency_max: auto
-
-- id: TC12
-  title: 极端超长 10000 字符，应快速拒绝而不是拖垮服务
-  design: 无效等价类 —— 远超上限，验证「快速失败」而非资源耗尽
+- id: TC27
+  title: "[实测口径] 10000 字符正常返回 200"
+  design: 无效等价类 —— 大输入，验证服务端能正常吞下而不是报错
   scenario: oversized
   prompt: !!str "{{'A' * 10000}}"
   expect:
-    status: 413
-    schema: error
-    error_code: context_length_exceeded
+    status: 200
+    schema: openai_chat
+    content_not_empty: true
+  latency_max: auto
+
+- id: TC28
+  title: "[实测口径] 50000 字符正常返回 200，且耗时可控"
+  design: |
+    大请求体稳定性。实测中曾多次出现随机 SSLEOFError（同样请求重试即成功），
+    说明该服务在网络层有抖动；这条用 5 万字符压一下，确认大请求体本身不是
+    断连的触发条件，并把耗时纳入判定。
+  scenario: oversized
+  prompt: !!str "{{'A' * 50000}}"
+  expect:
+    status: 200
+    schema: openai_chat
+    content_not_empty: true
   latency_max: auto

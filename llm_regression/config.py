@@ -5,13 +5,15 @@
 
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+from env_config import get as env_get
+from env_config import load_env
 
 MODULE_ROOT = Path(__file__).resolve().parent
 CONFIG_FILE = MODULE_ROOT / "config.yaml"
@@ -61,6 +63,8 @@ class EnvConfig:
     name: str
     target: str
     api: ApiConfig
+    # 请求体格式：simple = {"model","prompt"}（自建 Mock）；openai = {"model","messages":[...]}
+    payload_style: str = "simple"
     retry: RetryConfig = field(default_factory=RetryConfig)
     latency_baseline: float = 1.0
     mock_server: MockServerConfig = field(default_factory=MockServerConfig)
@@ -68,6 +72,10 @@ class EnvConfig:
     @property
     def is_mock(self) -> bool:
         return self.target.startswith("mock")
+
+    @property
+    def is_openai_style(self) -> bool:
+        return self.payload_style == "openai"
 
 
 def _resolve_placeholders(value: Any) -> Any:
@@ -80,7 +88,7 @@ def _resolve_placeholders(value: Any) -> Any:
 
     def _sub(match: re.Match[str]) -> str:
         name, default = match.group(1), match.group(2)
-        env_value = os.environ.get(name)
+        env_value = env_get(name)
         if env_value:
             return env_value
         if default is not None:
@@ -97,6 +105,9 @@ def load_config(env: str, config_file: Path | None = None) -> EnvConfig:
     path = config_file or CONFIG_FILE
     if not path.exists():
         raise ConfigError(f"配置文件不存在：{path}")
+
+    # 先加载 .env，让 ${VAR} 占位符能取到本地配置里的值
+    load_env()
 
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     environments = raw.get("environments") or {}
@@ -123,6 +134,7 @@ def load_config(env: str, config_file: Path | None = None) -> EnvConfig:
         name=env,
         target=str(block.get("target", env)),
         api=api,
+        payload_style=str(block.get("payload_style", "simple")),
         retry=RetryConfig(
             max_attempts=int(retry_raw.get("max_attempts", 3)),
             backoff=float(retry_raw.get("backoff", 0.05)),

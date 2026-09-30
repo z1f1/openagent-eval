@@ -8,6 +8,8 @@ environments:
   # 本地回归：自建 Mock 服务作为被测对象，结果确定可复现
   mock:
     target: mock
+    # 自建 Mock 的请求体是 {"model", "prompt"}
+    payload_style: simple
     api:
       base_url: "http://127.0.0.1:8000"
       path: "/llm/chat"
@@ -24,14 +26,17 @@ environments:
       host: "127.0.0.1"
       port: 8000
 
-  # 真实接口回归：凭证走环境变量
+  # 真实接口回归：凭证走环境变量 / .env
   real:
     target: real
+    # 真实服务是 OpenAI 兼容格式：{"model", "messages":[{"role","content"}]}
+    payload_style: openai
     api:
       base_url: "${LLM_BASE_URL}"
-      path: "/llm/chat"
+      # 真实服务是 OpenAI 兼容路径；Mock 用 /llm/chat（见 mock 环境）
+      path: "/v1/chat/completions"
       api_key: "${LLM_API_KEY}"
-      model: "${LLM_MODEL:-mock-llm}"
+      model: "${LLM_MODEL:-deepseek-chat}"
       timeout: 30.0
     retry:
       max_attempts: 2

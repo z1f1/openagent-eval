@@ -38,6 +38,7 @@ def _run(
         prompt,
         case_id=case.id,
         model=case.model,
+        mock_model=case.mock_model,
         timeout=case.request_timeout,
         raw_body=case.raw_body,
         trace=trace,

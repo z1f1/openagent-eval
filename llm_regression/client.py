@@ -18,6 +18,7 @@ from typing import Any
 import requests
 
 from config import EnvConfig
+from mock_server import LENIENT_MODEL
 
 MASK = "***"
 # 不传 timeout 时用配置默认值；需要“无超时”这种极端场景时显式传 None 之外的语义值
@@ -51,11 +52,23 @@ class ApiResponse:
 
     @property
     def content(self) -> str | None:
-        if isinstance(self.body, dict):
-            value = self.body.get("content")
-            if isinstance(value, str):
-                return value
-        return None
+        """生成内容提取器，同时支持两种结构。
+
+        - OpenAI 兼容：``choices[0].message.content``（真实服务）
+        - 扁平简化：``content``（早期 Mock 形状，保留兼容）
+        """
+        body = self.body
+        if not isinstance(body, dict):
+            return None
+
+        choices = body.get("choices")
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            message = choices[0].get("message")
+            if isinstance(message, dict) and isinstance(message.get("content"), str):
+                return message["content"]
+
+        value = body.get("content")
+        return value if isinstance(value, str) else None
 
 
 @dataclass
@@ -112,6 +125,7 @@ class LLMChatClient:
         *,
         case_id: str = "",
         model: str | None = None,
+        mock_model: str | None = None,
         timeout: float | None | object = _DEFAULT,
         raw_body: Any = None,
         trace: Trace | None = None,
@@ -120,6 +134,9 @@ class LLMChatClient:
 
         Args:
             prompt: 用户输入；``None`` 表示不发送 prompt 字段（缺失场景）。
+            model: 覆盖默认模型（真实环境生效）。
+            mock_model: 仅 mock 环境生效的模型覆盖。``mock-strict`` 让 Mock 走
+                「应有输入校验」的严格契约，默认 ``mock-llm`` 对齐被测服务的宽松实测行为。
             raw_body: 直接指定请求体（bytes 或字符串），用于非法 JSON / 异常编码场景。
         """
         effective_timeout = self.config.api.timeout if timeout is _DEFAULT else timeout  # type: ignore[assignment]
@@ -127,9 +144,21 @@ class LLMChatClient:
         if raw_body is not None:
             payload: Any = raw_body
         else:
-            payload = {"model": model or self.config.api.model, "prompt": prompt}
-            if prompt is None:
-                payload.pop("prompt")
+            # mock 环境：默认用宽松模型（对齐被测服务实测行为）；
+            # 显式指定 mock_model 时才把该名字直接发给 Mock（例如 mock-strict / mock-unknown）
+            resolved_model = (
+                (mock_model or LENIENT_MODEL) if self.config.is_mock else (model or self.config.api.model)
+            )
+            if self.config.is_openai_style:
+                # OpenAI 兼容格式：prompt 放进 messages[0].content
+                message: dict[str, Any] = {"role": "user"}
+                if prompt is not None:
+                    message["content"] = prompt
+                payload = {"model": resolved_model, "messages": [message]}
+            else:
+                payload = {"model": resolved_model, "prompt": prompt}
+                if prompt is None:
+                    payload.pop("prompt")
 
         if trace is not None:
             trace.case_id = case_id
@@ -142,6 +171,7 @@ class LLMChatClient:
             }
 
         response, attempts = self._post_with_retry(payload, effective_timeout)  # type: ignore[arg-type]
+
         if trace is not None:
             trace.response = {
                 "status_code": response.status_code,
@@ -170,6 +200,10 @@ class LLMChatClient:
                 data = payload if isinstance(payload, (bytes, str)) else json.dumps(
                     payload, ensure_ascii=False
                 ).encode("utf-8")
+                # 用例数据里可以写 {model} 占位符，按当前环境替换成实际模型名，
+                # 这样同一份 raw_body 在 mock / real 两种环境下都能用
+                if isinstance(data, (bytes, bytearray)):
+                    data = data.replace(b"{model}", self.config.api.model.encode("utf-8"))
                 resp = self.session.post(self.config.api.url, data=data, timeout=timeout)
                 elapsed = time.perf_counter() - started
                 last = ApiResponse(

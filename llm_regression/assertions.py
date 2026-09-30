@@ -19,14 +19,29 @@ from client import ApiResponse
 from cases import CaseData
 # 结构模板：字段名 -> 期望类型
 SCHEMA_RULES: dict[str, dict[str, Any]] = {
+    # 自建 Mock 的简化结构：{"content": "...", "usage": {...}}
     "chat_success": {
         "content": str,
+        "usage": dict,
+    },
+    # OpenAI 兼容结构：{"choices":[{"message":{"content": "..."}}], "usage": {...}}
+    # 真实被测服务用的是这一套，字段嵌套在 choices[0].message 里
+    "openai_chat": {
+        "id": str,
+        "object": str,
+        "choices": list,
         "usage": dict,
     },
     "error": {
         "error": dict,
     },
 }
+
+# 只声明状态码、不断言响应体结构的场景（例如某些服务对畸形请求只回纯文本）
+STATUS_ONLY_SCHEMAS = {"status_only"}
+
+# 业务错误信号的关键词：用于服务端不返回结构化错误码、只回纯文本的情况
+PLAIN_TEXT_ERROR_HINTS = ("failed", "error", "invalid", "unable", "unsupported", "denied")
 
 
 def _fail(case: CaseData, message: str) -> None:
@@ -59,7 +74,7 @@ def check_transport(case: CaseData, response: ApiResponse) -> None:
 def check_schema(case: CaseData, response: ApiResponse) -> None:
     """结构层 + 类型层。"""
     schema_name = case.expect.get("schema")
-    if not schema_name:
+    if not schema_name or str(schema_name) in STATUS_ONLY_SCHEMAS:
         return
     rules = SCHEMA_RULES.get(str(schema_name))
     if rules is None:
@@ -84,12 +99,45 @@ def check_schema(case: CaseData, response: ApiResponse) -> None:
         if not isinstance(error.get("message"), str) or not error["message"].strip():
             _fail(case, f"error.message 缺失或为空：{error!r}")
 
+    # OpenAI 结构深入校验：choices[0].message.content 必须是字符串
+    if schema_name == "openai_chat":
+        choices = body["choices"]
+        if not choices:
+            _fail(case, "choices 为空数组，未返回任何生成结果")
+        first = choices[0]
+        if not isinstance(first, dict) or not isinstance(first.get("message"), dict):
+            _fail(case, f"choices[0].message 结构异常：{first!r}")
+        if not isinstance(first["message"].get("content"), str):
+            _fail(
+                case,
+                f"choices[0].message.content 类型不符："
+                f"实际 {type(first['message'].get('content')).__name__}",
+            )
+
 
 def check_business_code(case: CaseData, response: ApiResponse) -> None:
-    """业务层：业务错误码。"""
+    """业务层：错误信号校验。
+
+    两种真实形态都要能表达：
+    - ``error_code: invalid_request_error``：结构化错误体里的 ``error.code`` 必须精确匹配；
+    - ``error_code: any_error_signal``：服务端不返回结构化错误码（例如网关直接回纯文本
+      ``Failed to parse the request body as JSON``），此时断言「状态码非 2xx 且响应里
+      确实有错误信息」，而不是硬套一个它不会返回的字段。
+    """
     expected = case.expect.get("error_code")
     if expected is None:
         return
+
+    if str(expected) == "any_error_signal":
+        code = response.error_code
+        text = (response.raw_text or "").strip()
+        has_signal = bool(code) or any(hint in text.lower() for hint in PLAIN_TEXT_ERROR_HINTS)
+        if response.status_code is None or 200 <= response.status_code < 300:
+            _fail(case, f"期望错误响应，实际状态码 {response.status_code}，响应体：{text[:200]!r}")
+        if not has_signal:
+            _fail(case, f"响应中没有可识别的错误信号（既无 error.code 也无错误文本）：{text[:200]!r}")
+        return
+
     actual = response.error_code
     if actual != expected:
         _fail(case, f"业务错误码不符：期望 {expected}，实际 {actual!r}（响应体：{response.body}）")

@@ -64,6 +64,10 @@ class CaseData:
     prompt: Any = None
     send_prompt: bool = True
     model: str | None = None
+    # 仅 mock 环境生效的模型覆盖：
+    # mock-llm        = 宽松（对齐被测开源服务的实测行为）
+    # mock-strict     = 严格（按「应有输入校验」的契约口径，用于契约对照）
+    mock_model: str | None = None
     raw_body: Any = None
     expect: dict[str, Any] = field(default_factory=dict)
     latency_max: float | str | None = None
@@ -96,6 +100,7 @@ def _parse_case(raw: dict[str, Any], source: Path) -> CaseData:
         prompt=_expand_repeat(raw.get("prompt")),
         send_prompt=bool(raw.get("send_prompt", True)),
         model=raw.get("model"),
+        mock_model=raw.get("mock_model"),
         raw_body=_expand_repeat(raw.get("raw_body")),
         expect=dict(raw["expect"]),
         latency_max=raw.get("latency_max"),

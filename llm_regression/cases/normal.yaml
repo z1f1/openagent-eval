@@ -8,7 +8,7 @@
   prompt: "简单介绍软件测试是什么"
   expect:
     status: 200
-    schema: chat_success
+    schema: openai_chat
     content_not_empty: true
     content_min_chars: 5
   latency_max: auto
@@ -20,7 +20,7 @@
   prompt: "Summarize this in one line: 接口自动化回归测试的价值是什么？"
   expect:
     status: 200
-    schema: chat_success
+    schema: openai_chat
     content_not_empty: true
     content_min_chars: 5
   latency_max: auto
@@ -31,6 +31,6 @@
   prompt: "这是一条新加的验证用例"
   expect:
     status: 200
-    schema: chat_success
+    schema: openai_chat
     content_not_empty: true
   latency_max: auto
