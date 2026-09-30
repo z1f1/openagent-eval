@@ -1,0 +1,29 @@
+{
+  // ============================================================
+  // 关键：不要用 PATH 里的 python
+  // 这台机器的 `python` 是 Microsoft Store 占位程序（版本 0.0.0.0），
+  // 运行脚本会直接退出（退出码 9009）且没有任何输出。
+  // 所以这里统一指向项目虚拟环境 .venv 里的解释器。
+  // ============================================================
+  "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+  "python.terminal.activateEnvironment": true,
+
+  // ---- pytest 集成：让 VS Code 左侧「测试」面板能直接跑用例 ----
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.cwd": "${workspaceFolder}",
+  "python.testing.pytestArgs": [
+    "llm_regression/test_llm_api.py",
+    "-c",
+    "llm_regression/pytest.ini",
+    "--env",
+    "mock"
+  ],
+
+  // ---- 文件与终端 ----
+  "files.encoding": "utf8",
+  "files.eol": "\n",
+  "terminal.integrated.env.windows": {
+    "PYTHONIOENCODING": "utf-8"
+  }
+}
