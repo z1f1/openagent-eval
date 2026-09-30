@@ -77,17 +77,9 @@ jobs:
 
   real-regression:
     name: 真实接口回归（需 Secrets）
-    # 注意：job 级 if 里不能用 secrets 上下文（GitHub Actions 硬限制），
-    # 只能用 github / inputs / needs / vars。
-    # 因此用**非敏感**的 Variables 开关 ENABLE_REAL_REGRESSION 控制是否执行，
-    # 真正的密钥仍放在 Secrets（加密、日志自动打码）。
-    #
-    # 两个条件都用「或」兜底：${{ inputs.env }} 与 ${{ github.event.inputs.env }}
-    # 在不同 GitHub 版本/触发方式下的可用性不一致，只写一个会出现「配置都对却被跳过」。
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      (inputs.env == 'real' || github.event.inputs.env == 'real') &&
-      vars.ENABLE_REAL_REGRESSION == 'true'
+    # 【临时诊断】此处原本有 job 级 if 门禁（workflow_dispatch + env=real + vars 开关），
+    # 但实测配置全部正确却被跳过，故暂时移除门禁让作业执行，用下面的诊断步骤
+    # 打印三个上下文的真实值，确认是哪个条件求值失败。查清后立即恢复门禁。
     runs-on: ubuntu-latest
     defaults:
       run:
