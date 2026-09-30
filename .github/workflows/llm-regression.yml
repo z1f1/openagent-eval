@@ -1,0 +1,131 @@
+name: llm-regression
+
+# 触发范围限定在相关文件：只改 llm_regression 或本工作流时才跑
+on:
+  push:
+    paths:
+      - "llm_regression/**"
+      - ".github/workflows/llm-regression.yml"
+  pull_request:
+    paths:
+      - "llm_regression/**"
+      - ".github/workflows/llm-regression.yml"
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "运行环境（real 需要配置 LLM_* Secrets）"
+        type: choice
+        options: [mock, real]
+        default: mock
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+concurrency:
+  group: llm-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mock-regression:
+    name: Mock 回归门禁（必过）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: llm_regression
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: llm_regression/requirements.txt
+
+      - name: 安装锁定依赖
+        run: python -m pip install -r requirements.txt
+
+      - name: 执行 Mock 全量回归（四类场景）
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python run_tests.py
+
+      - name: 发布 JUnit 结果到 CI
+        if: always()
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: llm_regression/reports/junit_mock.xml
+          check_name: LLM Regression (Mock)
+          fail_on_failure: true
+          # 没有 JUnit 文件（例如收集阶段就失败）时也报错，避免“假绿”
+          require_tests: true
+          detailed_summary: true
+
+      - name: 归档 HTML 报告与 JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-regression-mock-${{ github.run_number }}
+          path: |
+            llm_regression/reports/report_mock_*.html
+            llm_regression/reports/latest_mock.html
+            llm_regression/reports/run_summary_mock.md
+            llm_regression/reports/junit_mock.xml
+          if-no-files-found: warn
+          retention-days: 30
+
+  real-regression:
+    name: 真实接口回归（需 Secrets）
+    needs: mock-regression
+    # 未配置 Secrets 时自动跳过，不会让门禁变红
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.env == 'real' &&
+      secrets.LLM_API_KEY != ''
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: llm_regression
+    env:
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_MODEL: ${{ vars.LLM_MODEL || 'deepseek-chat' }}
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: llm_regression/requirements.txt
+
+      - name: 安装锁定依赖
+        run: python -m pip install -r requirements.txt
+
+      - name: 执行真实接口回归
+        # 客户端已对连接类异常做 3 次指数退避重试（应对随机 SSL 断连）
+        run: python run_tests.py --env real
+
+      - name: 发布 JUnit 结果到 CI
+        if: always()
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: llm_regression/reports/junit_real.xml
+          check_name: LLM Regression (Real)
+          fail_on_failure: true
+          require_tests: true
+
+      - name: 归档 HTML 报告与 JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-regression-real-${{ github.run_number }}
+          path: |
+            llm_regression/reports/report_real_*.html
+            llm_regression/reports/latest_real.html
+            llm_regression/reports/run_summary_real.md
+            llm_regression/reports/junit_real.xml
+          if-no-files-found: warn
+          retention-days: 30
