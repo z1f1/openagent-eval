@@ -3,14 +3,17 @@
 要点
 ----
 - 会话复用：一个 Session 承载连接池与默认 header。
-- 重试有边界：只对 5xx 与连接异常重试；4xx 是业务结果不重试；超时不重试，
-  否则超时用例会被重试拖成分钟级。
+- 重试有边界：4xx 是业务结果不重试；超时不重试；**连接类异常与 5xx 才重试**，
+  并对连接类异常做指数退避（真实服务存在随机 SSL 断连，不重试会让回归随机变红）。
+- 失败不中断：重试耗尽后返回带 ``error_kind`` 的响应，让「连接失败」成为可断言的
+  失败结果，从而被失败留痕与报告记录下来。
 - 全程留痕：入参、响应体、耗时、重试次数写进 Trace，供失败留痕与禅道提单复用。
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -20,6 +23,7 @@ import requests
 from config import EnvConfig
 from mock_server import LENIENT_MODEL
 
+LOGGER = logging.getLogger("llm-regression.client")
 MASK = "***"
 # 不传 timeout 时用配置默认值；需要“无超时”这种极端场景时显式传 None 之外的语义值
 _DEFAULT = object()
@@ -190,7 +194,24 @@ class LLMChatClient:
             headers["Authorization"] = f"Bearer {MASK}"
         return headers
 
+    @staticmethod
+    def _backoff_delay(base: float, attempt: int, cap: float = 8.0) -> float:
+        """指数退避，避免对瞬时故障做密集重试。"""
+        return min(base * (2 ** (attempt - 1)), cap)
+
     def _post_with_retry(self, payload: Any, timeout: float | None) -> tuple[ApiResponse, int]:
+        """发送请求并按错误类型决定是否重试。
+
+        重试策略（三类错误区别对待）：
+        - **超时**：不重试。重试会把「超时用例」拖成分钟级，且客户端已放弃这次调用。
+        - **连接类异常**（SSLEOFError / ConnectionReset / 读超时等）：重试 + 指数退避。
+          实测被真实服务的随机 SSL 断连干扰，不重试会导致 RAG 回归随机变红。
+        - **5xx**：重试 + 指数退避（服务端临时故障）。
+        - **4xx / 2xx**：直接返回，4xx 是业务结果，重试没有意义。
+
+        重试耗尽后**返回带 error_kind 的响应**而不是抛异常 —— 让「连接失败」成为一条
+        可断言的失败结果（失败留痕与报告才能记录到它），而不是中断整个会话。
+        """
         retry = self.config.retry
         last: ApiResponse | None = None
 
@@ -216,6 +237,7 @@ class LLMChatClient:
                 if resp.status_code < 500:
                     return last, attempt
             except requests.exceptions.Timeout as exc:
+                # 超时不重试：立刻返回，让超时用例快速失败
                 return (
                     ApiResponse(
                         status_code=None,
@@ -235,16 +257,19 @@ class LLMChatClient:
                     raw_text="",
                     elapsed=time.perf_counter() - started,
                     attempts=attempt,
-                    error_kind="transport",
-                    error_message=str(exc),
+                    error_kind="connection",
+                    error_message=f"{type(exc).__name__}: {exc}",
                 )
-                if attempt == retry.max_attempts:
-                    raise RequestError(
-                        f"连接 {self.config.api.url} 失败（已尝试 {attempt} 次）：{exc}"
-                    ) from exc
+                LOGGER.warning(
+                    "第 %s/%s 次请求连接失败（%s），%s",
+                    attempt,
+                    retry.max_attempts,
+                    type(exc).__name__,
+                    "将退避后重试" if attempt < retry.max_attempts else "重试已耗尽",
+                )
 
             if attempt < retry.max_attempts:
-                time.sleep(retry.backoff * attempt)
+                time.sleep(self._backoff_delay(retry.backoff, attempt))
 
         if last is None:  # pragma: no cover - 理论不可达
             raise RequestError("请求未产生任何响应")

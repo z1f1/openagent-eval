@@ -39,7 +39,9 @@ environments:
       model: "${LLM_MODEL:-deepseek-chat}"
       timeout: 30.0
     retry:
-      max_attempts: 2
-      backoff: 0.5
+      # 真实服务存在随机 SSL 断连（见缺陷 id=16），
+      # 因此重试次数与退避都比 Mock 环境更宽：最多 3 次，退避 1.5s / 3s
+      max_attempts: 3
+      backoff: 1.5
     # 真实大模型生成耗时抖动大，基线按实测 P95 标定后再收紧
     latency_baseline: 20.0
