@@ -7,8 +7,7 @@
   scenario: normal
   prompt: "简单介绍软件测试是什么"
   expect:
-    # ⚠️ 临时故意改错，仅用于验证 CI 门禁能否拦住失败（验证后立即还原为 200）
-    status: 599
+    status: 200
     schema: openai_chat
     content_not_empty: true
     content_min_chars: 5
