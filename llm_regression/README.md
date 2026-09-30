@@ -95,21 +95,53 @@ python run_tests.py --env real --scenario normal
 1. **TC04（XSS）不再断言 400。** `<script>alert(1)</script>` 是合法字符集内的字符串，后端正确做法是当作普通输入处理并做输出编码，而不是拒绝。把 400 写死进断言等于把未确认的设计当成需求。现在断言的是「正常返回 + 响应不含 `<script` / `javascript:` / `onerror=`」。
 2. **`latency_max: auto`** 表示跟随当前环境的耗时基线。Mock 是毫秒级（基线 0.5s），真实大模型是秒级，两者不能共用写死的阈值，否则真实回归会被误判为性能回退。
 
-## 失败留痕与禅道提单
+## 失败留痕与禅道联动
 
 用例失败时 `conftest.py` 的钩子会：
 1. 把用例编号 / 场景 / 设计方法 / 期望结果 / 请求参数 / 响应结果写入 HTML 报告（`Authorization` 已掩码）；
-2. 若配置了禅道环境变量，自动生成缺陷单并提交。
+2. 若启用禅道，自动生成缺陷单并提交。
+
+### 上传整次运行信息到禅道
+
+跑完回归后，把**执行信息 + 报告附件**归档成禅道里的一条记录：
 
 ```powershell
-$env:ZENTAO_ENABLED="1"
-$env:ZENTAO_BASE_URL="http://127.0.0.1:81/zentao/api.php/v2"
-$env:ZENTAO_TOKEN="你的令牌"
-$env:ZENTAO_PRODUCT_ID="1"
-$env:ZENTAO_MODULE_ID="1"
+# 凭证放本地 .env（已忽略，不进版本库）：复制 .env.example 为 .env 后填写
+python llm_regression/run_tests.py --upload-zentao
 ```
 
-> 凭证全部走环境变量，**代码里不留明文**。提单失败只记日志，不改变用例的通过/失败判定——提单不能污染回归结论。
+不加 `--upload-zentao` 时只生成本地摘要 `reports/run_summary_<env>.md`，不碰禅道。
+
+**上传内容**：执行环境 / 接口地址 / 模型 / 执行命令 / 耗时基线 / 重试策略，
+20 条用例的明细表（编号、场景、结果、耗时、HTTP 状态码、业务错误码、重试次数），
+失败清单，以及 4 个附件（pytest-html 报告、JUnit XML、JSON/Markdown 摘要）。
+
+**接口实现顺序**（实测确认，两个坑都踩过）：
+
+```
+1. POST /api.php/v2/bugs     {productID, title, steps, openedBuild:["trunk"]}
+                             -> {"status":"success","id":N}      先拿到记录 id
+2. POST /api.php/v2/files    multipart: file + objectType=bug + objectID=<记录id>
+                             -> 附件精确绑定到该记录
+```
+
+- ⚠️ 把 `uid` 放进创建记录的 payload 会**阻止**附件关联；
+- ⚠️ 不带 uid 时禅道会把该产品下所有「未挂载文件」自动挂到新记录上——隐式行为，
+  有残留文件或并发时会挂错，所以**不要依赖它**，必须用 `objectID` 显式绑定。
+- `openedBuild` 是 Bug 表单必填项；产品没有版本数据时用 `trunk` 即可。
+
+### 环境变量（全部可从 `.env` 读取）
+
+| 变量 | 说明 |
+| --- | --- |
+| `ZENTAO_ENABLED` | 置 `1` 才启用禅道相关功能 |
+| `ZENTAO_BASE_URL` | 例如 `http://127.0.0.1:81/zentao` |
+| `ZENTAO_PRODUCT_ID` | 产品 ID |
+| `ZENTAO_ACCOUNT` / `ZENTAO_PASSWORD` | 账号密码，脚本自动换 token |
+| `ZENTAO_TOKEN` | 也可直接用 token（优先于账号密码） |
+| `ZENTAO_BUILD` | 影响版本，默认 `trunk` |
+
+> 凭证**绝不写进代码**。CI 里走 Secrets / 环境变量；本地走 `.env`（已在 `.gitignore` 中）。
 
 ## 怎么加一个用例
 
