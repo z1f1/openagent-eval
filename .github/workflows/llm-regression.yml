@@ -77,9 +77,14 @@ jobs:
 
   real-regression:
     name: 真实接口回归（需 Secrets）
-    # 【临时诊断】此处原本有 job 级 if 门禁（workflow_dispatch + env=real + vars 开关），
-    # 但实测配置全部正确却被跳过，故暂时移除门禁让作业执行，用下面的诊断步骤
-    # 打印三个上下文的真实值，确认是哪个条件求值失败。查清后立即恢复门禁。
+    # job 级 if 只判断「是否手动触发且选了 real」。
+    #
+    # 为什么不把 vars 开关也放这里：实测发现 job 级 if 对 vars 的字符串比较极其严格 ——
+    # Variable 值只要带一个不可见字符（空格/制表符），条件即判 false，作业被**静默跳过**，
+    # 界面上只看到 skipped，排查成本极高。所以开关下移到 step 级，并用 contains 容错。
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.env == 'real'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -92,30 +97,43 @@ jobs:
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       PYTHONIOENCODING: utf-8
     steps:
-      - name: 打印触发上下文（便于排查作业被跳过的原因）
+      - name: 检查开关（未开启则跳过后续步骤）
+        id: gate
+        shell: bash
+        # contains 而非 == ：容忍 Variable 值里的首尾空白/不可见字符
         run: |
-          echo "event_name     = ${{ github.event_name }}"
-          echo "inputs.env     = '${{ inputs.env }}'"
-          echo "event.inputs   = '${{ github.event.inputs.env }}'"
-          echo "vars 开关      = '${{ vars.ENABLE_REAL_REGRESSION }}'"
+          echo "event_name = ${{ github.event_name }}"
+          echo "inputs.env = '${{ inputs.env }}'"
+          echo "开关值     = [${{ vars.ENABLE_REAL_REGRESSION }}]"
+          if [[ "${{ vars.ENABLE_REAL_REGRESSION }}" == *true* ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "真实回归已启用，继续执行"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::未启用真实回归（ENABLE_REAL_REGRESSION 未设为 true），跳过后续步骤"
+          fi
 
       - uses: actions/checkout@v4
+        if: steps.gate.outputs.enabled == 'true'
 
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.enabled == 'true'
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: llm_regression/requirements.txt
 
       - name: 安装锁定依赖
+        if: steps.gate.outputs.enabled == 'true'
         run: python -m pip install -r requirements.txt
 
       - name: 执行真实接口回归
+        if: steps.gate.outputs.enabled == 'true'
         # 客户端已对连接类异常做 3 次指数退避重试（应对随机 SSL 断连）
         run: python run_tests.py --env real
 
       - name: 发布 JUnit 结果到 CI
-        if: always()
+        if: always() && steps.gate.outputs.enabled == 'true'
         uses: mikepenz/action-junit-report@v5
         with:
           report_paths: llm_regression/reports/junit_real.xml
@@ -124,7 +142,7 @@ jobs:
           require_tests: true
 
       - name: 归档 HTML 报告与 JUnit XML
-        if: always()
+        if: always() && steps.gate.outputs.enabled == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: llm-regression-real-${{ github.run_number }}
