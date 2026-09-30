@@ -1,0 +1,51 @@
+# 空输入场景（无效等价类 + 边界值 0 字符）
+
+- id: TC02
+  title: prompt 为空字符串，应返回 400 且带业务错误码
+  design: 边界值 —— 0 字符
+  scenario: empty
+  prompt: ""
+  expect:
+    status: 400
+    schema: error
+    error_code: empty_prompt
+
+- id: TC06
+  title: prompt 为纯空格，长度非 0 但语义为空，应返回 400
+  design: 无效等价类 —— 纯空白（trim 后为空）
+  scenario: empty
+  prompt: "   "
+  expect:
+    status: 400
+    schema: error
+    error_code: blank_prompt
+
+- id: TC07
+  title: prompt 为纯换行，应返回 400
+  design: 无效等价类 —— 控制字符中的空白类
+  scenario: empty
+  prompt: "\n\n"
+  expect:
+    status: 400
+    schema: error
+    error_code: blank_prompt
+
+- id: TC08
+  title: 不发送 prompt 字段，应返回 400 而不是静默成功
+  design: 无效等价类 —— 必填字段缺失
+  scenario: empty
+  send_prompt: false
+  expect:
+    status: 400
+    schema: error
+    error_code: empty_prompt
+
+- id: TC09
+  title: prompt 传数字类型（非法类型），应返回 400
+  design: 无效等价类 —— 字段类型错误
+  scenario: empty
+  prompt: 12345
+  expect:
+    status: 400
+    schema: error
+    error_code: empty_prompt

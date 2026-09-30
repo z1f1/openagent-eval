@@ -1,0 +1,97 @@
+# 非法字符 / 异常编码 / 异常分支
+# mock_only: true 的用例依赖自建 Mock 注入异常分支，跑真实接口时自动跳过。
+
+- id: TC04
+  title: XSS payload 作为普通文本处理，响应中不得回显可执行片段
+  design: |
+    安全场景。注意这里刻意**不改**成「期望 400」：
+    `<script>alert(1)</script>` 是合法字符集内的字符串，后端正确做法是
+    当作普通输入处理并做输出编码，而不是拒绝。把 400 写死进断言等于把
+    未确认的设计当成需求。因此断言状态码为正常返回 + 响应不含可执行片段。
+  scenario: illegal
+  prompt: "<script>alert(1)</script>"
+  expect:
+    status: 200
+    schema: chat_success
+    content_not_empty: true
+    xss_not_executable: true
+  latency_max: auto
+
+- id: TC13
+  title: prompt 含 NUL 字符（\\x00），应返回 400 非法字符
+  design: 无效等价类 —— 不可打印的 NUL
+  scenario: illegal
+  prompt: "正常文本\x00正常文本"
+  expect:
+    status: 400
+    schema: error
+    error_code: illegal_characters
+
+- id: TC14
+  title: prompt 含不可打印控制字符（0x01），应返回 400
+  design: 无效等价类 —— 控制字符（\\t \\n \\r 除外）
+  scenario: illegal
+  prompt: "文本\x01文本"
+  expect:
+    status: 400
+    schema: error
+    error_code: illegal_characters
+
+- id: TC15
+  title: 请求体为残缺 JSON（非法语法），应返回 400
+  design: 无效等价类 —— 请求体格式非法
+  scenario: illegal
+  raw_body: '{"prompt": "hello", "model":'
+  expect:
+    status: 400
+    schema: error
+    error_code: invalid_json
+
+- id: TC16
+  title: 请求体为非 UTF-8 异常编码字节，应返回 400
+  design: 无效等价类 —— 编码异常
+  scenario: illegal
+  raw_body: !!binary "q5i6u7i8"
+  expect:
+    status: 400
+    schema: error
+    error_code: invalid_json
+
+- id: TC17
+  title: 服务端持续 500，客户端应完成重试后仍判定失败
+  design: 异常分支 —— 故障注入，验证「重试有上限」而不是无限重试
+  scenario: illegal
+  prompt: "触发服务端内部错误"
+  model: error-500
+  expect:
+    status: 500
+    schema: error
+    error_code: model_internal_error
+    min_attempts: 3
+  latency_max: 5.0
+  mock_only: true
+
+- id: TC18
+  title: 瞬时错误自愈——前 2 次 500、第 3 次成功，验证重试策略真的生效
+  design: 异常分支 —— 瞬时故障应被重试覆盖，最终返回成功
+  scenario: illegal
+  prompt: "触发瞬时错误并验证重试自愈"
+  model: error-500x2
+  expect:
+    status: 200
+    schema: chat_success
+    content_not_empty: true
+    min_attempts: 3
+  latency_max: 2.0
+  mock_only: true
+
+- id: TC19
+  title: 客户端超时分支——服务端慢响应应在超时时间内快速失败
+  design: 异常分支 —— 服务端耗时超过客户端超时预算
+  scenario: illegal
+  prompt: "__timeout__ 这条请求会被 Mock 故意拖住"
+  request_timeout: 1.0
+  expect:
+    status: null
+    timeout: true
+  mock_only: true

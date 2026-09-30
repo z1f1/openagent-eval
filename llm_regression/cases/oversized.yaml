@@ -1,0 +1,46 @@
+# 超长文本场景（边界值分析）
+# 契约上限：prompt 最长 1000 字符。边界三点：999 / 1000 / 1001
+
+- id: TC03
+  title: 边界外 1001 字符（上限 +1），应返回 413 且提示上下文超限
+  design: 边界值 —— 离点（上限 +1）
+  scenario: oversized
+  prompt: !!str "{{'A' * 1001}}"
+  expect:
+    status: 413
+    schema: error
+    error_code: context_length_exceeded
+  latency_max: auto
+
+- id: TC10
+  title: 边界值 1000 字符（恰好等于上限），应正常返回 200
+  design: 边界值 —— 上点（恰好等于上限）
+  scenario: oversized
+  prompt: !!str "{{'A' * 1000}}"
+  expect:
+    status: 200
+    schema: chat_success
+    content_not_empty: true
+  latency_max: auto
+
+- id: TC11
+  title: 边界内 999 字符（上限 -1），应正常返回 200
+  design: 边界值 —— 内点（上限 -1）
+  scenario: oversized
+  prompt: !!str "{{'A' * 999}}"
+  expect:
+    status: 200
+    schema: chat_success
+    content_not_empty: true
+  latency_max: auto
+
+- id: TC12
+  title: 极端超长 10000 字符，应快速拒绝而不是拖垮服务
+  design: 无效等价类 —— 远超上限，验证「快速失败」而非资源耗尽
+  scenario: oversized
+  prompt: !!str "{{'A' * 10000}}"
+  expect:
+    status: 413
+    schema: error
+    error_code: context_length_exceeded
+  latency_max: auto

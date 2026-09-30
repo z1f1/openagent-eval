@@ -1,0 +1,26 @@
+# 正常场景（有效等价类）
+# 新增用例只需在这里加一行，用例代码与断言规则无需改动。
+
+- id: TC01
+  title: 正常中文提问，返回 200 且结构完整
+  design: 有效等价类 —— 长度与字符集都合法的常规输入
+  scenario: normal
+  prompt: "简单介绍软件测试是什么"
+  expect:
+    status: 200
+    schema: chat_success
+    content_not_empty: true
+    content_min_chars: 5
+  latency_max: auto
+
+- id: TC05
+  title: 中英文混合提问，验证多字符集不被误判
+  design: 有效等价类 —— 中英文与标点混合
+  scenario: normal
+  prompt: "Summarize this in one line: 接口自动化回归测试的价值是什么？"
+  expect:
+    status: 200
+    schema: chat_success
+    content_not_empty: true
+    content_min_chars: 5
+  latency_max: auto
