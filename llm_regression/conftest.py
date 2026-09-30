@@ -23,6 +23,13 @@ from typing import Any, Iterator
 
 import pytest
 
+# 本模块是扁平结构（内部直接 import cases / client / config / ...）。
+# 无论用 run_tests.py、还是 pytest 直连（含 VS Code 测试面板），
+# 都保证模块目录在 sys.path 上，避免 "No module named 'cases'"。
+_MODULE_DIR = str(Path(__file__).resolve().parent)
+if _MODULE_DIR not in sys.path:
+    sys.path.insert(0, _MODULE_DIR)
+
 try:
     import pytest_html
 except ImportError:  # pragma: no cover - 未安装 pytest-html 时降级为纯 pytest 输出
