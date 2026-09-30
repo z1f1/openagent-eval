@@ -156,6 +156,41 @@ python llm_regression/run_tests.py              # Mock：30 passed（含契约�
 python llm_regression/run_tests.py --env real   # 真实：18 passed（连跑 3 次全绿）
 ```
 
+## 接入 CI
+
+工作流：[`.github/workflows/llm-regression.yml`](../.github/workflows/llm-regression.yml)
+
+| 作业 | 触发 | 判定 | 说明 |
+| --- | --- | --- | --- |
+| `mock-regression` | push / PR（限 `llm_regression/**` 变更） | **必过门禁** | 2 秒跑完 30 条，离线可跑，结果确定 |
+| `real-regression` | 手动 `workflow_dispatch` 选 `real` | 需 Secrets | 未配置 `LLM_API_KEY` 时**自动跳过**，不会让门禁变红 |
+
+产物：JUnit XML 进 CI 结果页（`require_tests: true` 防「假绿」），HTML 报告与运行摘要作为 artifact 归档 30 天。
+
+### 关于随机 SSL 断连（缺陷 id=16）
+
+真实服务存在随机 `SSLEOFError`，不处理会让 CI 随机变红。请求层已按错误类型区分策略：
+
+| 错误类型 | 策略 | 原因 |
+| --- | --- | --- |
+| 超时 | **不重试** | 重试会把「超时用例」拖成分钟级；客户端已放弃本次调用 |
+| 连接类异常（SSLEOFError / ConnectionReset） | **重试 3 次 + 指数退避**（1.5s / 3s） | 应对随机断连 |
+| 5xx | **重试 + 指数退避** | 服务端临时故障 |
+| 4xx / 2xx | 直接返回 | 4xx 是业务结果，重试无意义 |
+
+重试耗尽后**返回带 `error_kind` 的结构化失败结果**，而不是抛异常 ——
+这样「连接失败」会成为一条可断言的失败结果，能被失败留痕与报告记录下来，而不是中断整个会话。
+
+### 配置真实回归的 Secrets
+
+仓库 `Settings → Secrets and variables → Actions`：
+
+| 名称 | 类型 | 说明 |
+| --- | --- | --- |
+| `LLM_BASE_URL` | Secret | 例如 `https://api.deepseek.com` |
+| `LLM_API_KEY` | Secret | 密钥 |
+| `LLM_MODEL` | Variable（可选） | 默认 `deepseek-chat` |
+
 ## 失败留痕与禅道联动
 
 用例失败时 `conftest.py` 的钩子会：
