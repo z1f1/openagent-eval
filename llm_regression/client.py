@@ -3,6 +3,9 @@
 要点
 ----
 - 会话复用：一个 Session 承载连接池与默认 header。
+- **本地地址不走代理**：被测服务是 localhost/127.0.0.1 时清空代理并关闭 trust_env。
+  否则 HTTP(S)_PROXY 环境变量会把对本地 Mock 的请求也转发出去，
+  返回 502 Bad Gateway（实测踩过：设了代理后 30 条用例全挂）。
 - 重试有边界：4xx 是业务结果不重试；超时不重试；**连接类异常与 5xx 才重试**，
   并对连接类异常做指数退避（真实服务存在随机 SSL 断连，不重试会让回归随机变红）。
 - 失败不中断：重试耗尽后返回带 ``error_kind`` 的响应，让「连接失败」成为可断言的
@@ -17,6 +20,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
@@ -27,6 +31,32 @@ LOGGER = logging.getLogger("llm-regression.client")
 MASK = "***"
 # 不传 timeout 时用配置默认值；需要“无超时”这种极端场景时显式传 None 之外的语义值
 _DEFAULT = object()
+
+# 本地地址：指向这些主机时不走代理
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"}
+
+
+def is_local_url(url: str) -> bool:
+    """判断 URL 是否指向本机（本地 Mock 服务）。"""
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
+    return host in LOCAL_HOSTS or host.startswith("127.")
+
+
+def build_session(config: EnvConfig, session: requests.Session | None = None) -> requests.Session:
+    """按目标地址决定代理策略。
+
+    - 本地地址：清空 proxies 并关闭 trust_env，避免 HTTP(S)_PROXY 把请求转发给代理而拿到 502。
+    - 远端地址：保持默认行为（沿用环境变量里的代理），否则在必须走代理的网络环境下直连不通。
+    """
+    sess = session or requests.Session()
+    if is_local_url(config.api.url):
+        sess.trust_env = False
+        sess.proxies = {}
+        LOGGER.info("目标为本地地址 %s，已禁用代理（避免 502）", config.api.url)
+    return sess
 
 
 class RequestError(RuntimeError):
@@ -106,7 +136,8 @@ class LLMChatClient:
 
     def __init__(self, config: EnvConfig, session: requests.Session | None = None) -> None:
         self.config = config
-        self.session = session or requests.Session()
+        # 本地地址自动禁用代理，避免被 HTTP(S)_PROXY 拦成 502
+        self.session = build_session(config, session)
         self.session.headers.update(config.api.headers)
         self._traces: dict[str, Trace] = {}
 
