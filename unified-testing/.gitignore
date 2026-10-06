@@ -1,0 +1,24 @@
+# ---- 环境与凭证 ----
+.env
+*.env
+!.env.example
+
+# ---- 测试产物 ----
+reports/
+!reports/.gitkeep
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- 浏览器驱动与缓存 ----
+drivers/
+*.log
+
+# ---- 编辑器 ----
+.vscode/settings.json.bak
+.idea/

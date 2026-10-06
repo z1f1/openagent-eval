@@ -1,0 +1,55 @@
+# 被测系统（SUT）清单
+#
+# 设计目的：把"测什么系统"抽象成配置。
+# 新增一个靶子只需在这里加一段，不用改框架代码。
+#
+# 说明：靶子是独立运行的外部系统，不属于本项目。
+#       本项目只负责"测试"，不包含被测系统的代码。
+
+gitea:
+  name: Gitea 代码托管平台
+  type: web
+  base_url: http://127.0.0.1:3000
+  # 本地服务，必须绕过代理，否则会拿到 502
+  no_proxy: true
+  # 可用维度
+  capabilities:
+    - ui          # Selenium 浏览器自动化
+    - api         # REST API
+    - perf        # 性能压测
+    - security    # 安全扫描
+  # 测试账号
+  # ★ 密码一律走环境变量，仓库里不出现任何明文口令。
+  #   本地使用：把 unified-testing/.env.example 复制为 .env 并填写。
+  accounts:
+    admin:
+      username: testadmin
+      password: ${GITEA_ADMIN_PASSWORD}
+      email: testadmin@example.com
+    normal:
+      username: testuser
+      password: ${GITEA_USER_PASSWORD}
+      email: testuser@example.com
+  # 健康检查：框架启动前用它确认靶子活着
+  health_check:
+    method: GET
+    path: /api/v1/version
+    expect_status: 200
+    expect_json_field: version
+
+zentao:
+  name: 禅道缺陷管理系统
+  type: web
+  base_url: http://127.0.0.1:81/zentao
+  no_proxy: true
+  capabilities:
+    - ui
+    - api
+  accounts:
+    admin:
+      username: admin
+      password: ${ZENTAO_PASSWORD}
+  health_check:
+    method: GET
+    path: /my.html
+    expect_status: 200

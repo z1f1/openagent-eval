@@ -1,0 +1,65 @@
+# 全局设置：所有测试类型（UI / 接口 / 性能 / 安全）共用
+
+project:
+  name: unified-testing
+  description: 面向 Web 系统的统一自动化测试框架（UI / 接口 / 性能 / 安全）
+
+# 默认靶子：不指定 --target 时使用
+default_target: gitea
+
+# 浏览器设置（UI 测试）
+browser:
+  # 本机已有 Edge，直接复用，无需下载 Chromium
+  name: edge
+  headless: true            # 无头模式：不弹窗口，节省内存
+  window_size: 1440,900
+  # 元素等待上限（秒）
+  implicit_wait: 0          # 关闭隐式等待，统一用显式等待，避免不可控的隐式超时
+  explicit_wait: 10
+  page_load_timeout: 30
+  # 浏览器启动失败时的额外重试次数（Edge 驱动偶发原生崩溃，重试可提升稳定性）
+  max_retries: 2
+  # 失败时自动截图（留痕）
+  screenshot_on_failure: true
+
+# 接口测试设置
+api:
+  timeout: 10
+  retry: 2
+  verify_ssl: true
+
+# 性能测试设置（Locust）
+performance:
+  users: 10                 # 并发用户数
+  spawn_rate: 2             # 每秒启动用户数
+  run_time: 30s             # 持续时间
+  # 通过标准（性能门禁）
+  thresholds:
+    p95_ms: 2000            # 95 分位响应时间上限
+    error_rate: 0.01        # 错误率上限 1%
+    min_rps: 5              # 最低吞吐量
+
+# 安全测试设置
+security:
+  # 只扫描、不发起攻击性请求（合规要求）
+  mode: passive
+  scan_timeout: 300
+
+# 质量保障
+quality:
+  # 不稳定用例检测：同一用例重复执行的次数
+  flakiness_repeat: 5
+  # 重复执行中失败多少次算"不稳定"
+  flakiness_threshold: 1
+
+# 报告输出
+reports:
+  root: reports
+  format: html              # html / json / junit
+  keep_last: 20             # 保留最近 N 次结果
+
+# 缺陷管理集成（复用你上个项目的禅道集成）
+defect_tracking:
+  enabled: false            # 默认关闭，需要时打开
+  system: zentao
+  auto_submit_on_failure: false
